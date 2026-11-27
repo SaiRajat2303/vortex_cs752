@@ -31,6 +31,13 @@ Vortex checkout at `vortex/` (commit `ca18837bd`). Concerns are ordered so that 
 >   time 7 cycles (TCU 6), so wake-ups beyond ~6 cycles need pre-wake to avoid stalls.
 > - 6b: PG and CG idle views differ by ≤ 1 window, so not splitting uop sequences costs almost nothing.
 
+> **Step 4 outcome (2026-11-27)** — details in `step4.md`: timeout-based PG is a GO (far above
+> static B4-UB; the TCU opportunity holds even at ASAP7 TT). History (P1) is within ±3 points of the
+> best global timeout at SS and leakage shares 5–30%, 11 points behind at TT; it wins where kernels
+> need very different timeouts (attention) and loses on launch-to-launch changes. Model parameters
+> set in step 4: candidate N = {0, 8, …, 16384, ∞} (4 bits; concern 1's 3-bit set ends at 256, too
+> short for the step-3 BETs), θ = 2, stall cap 1%; launch boundary cost-neutral.
+
 | # | Concern | Affects | Status |
 |---|---|---|---|
 | 1 | When the CG→PG decision is made (+ CG/PG sequencing and energy accounting) | §3.1, §3.3, §3.4, §4.1, §4.3 | **Decided: option B** (parameters TBD in step 4) |
@@ -42,6 +49,51 @@ Vortex checkout at `vortex/` (commit `ca18837bd`). Concerns are ordered so that 
 | 7 | Small doc fixes | various | **Decided: drop SLVT, install ASAP7 at step 3, reword §3.2, fix testbench list** |
 | 8 | Baseline for clock-gating savings (tool-inserted CG vs own ICGs) | §4.1, §4.2, §4.3, step 9 | **Decided: two synthesis stacks (with and without Yosys `clockgate`)** |
 | 9 | Leakage is tiny in ASAP7, bounding PG savings | §4.2, §4.3, step 4 | **Open** (measured in step 3) |
+| 10 | Workloads lack repeated kernel launches, which history needs | §4.4, steps 4, 7 | **Proposed** (recommended set used for step 4) |
+| 11 | History (P1) shows mixed benefit over a global timeout — build step 7? | steps 6, 7 | **Decided: option C (P1-C), validated in the step-4 model** |
+
+---
+
+## Key terms (P1, θ, stall cap, option C)
+
+**P1 — history-guided power gating (the proposed policy).** Each core has a small table keyed on
+the kernel's entry PC (`entry_r` in `VX_cta_dispatch`). For every kernel it stores one
+power-gating timeout **N\*** per PG domain (TCU, FPU, TFU): once the unit is idle and drained it is
+clock-gated immediately and power-gated after N\* idle cycles (N\* = 0: start/keep it in PG;
+N\* = ∞: CG only). At launch the core looks up the kernel and loads each unit's N\*; during the
+launch it records the unit's idle-run lengths; at the end it computes the timeout that would have
+been best for that launch and updates the table. The baselines differ only in where N comes from:
+B3 uses one fixed N, B4-UB gates only units unused for a whole launch, O knows every idle window.
+
+**θ — confidence threshold.** Each table entry carries a 2-bit confidence counter (0–3). A new
+entry starts at 1. After each launch the freshly computed best N is compared with the stored N\*:
+same or adjacent candidate (±1 bucket, e.g. 512 vs 1024) → confidence +1; otherwise −1, and at 0 the
+entry is replaced. **The stored N\* is used only if confidence ≥ θ**; below θ the controller uses
+the fallback timeout. θ = 1 trusts an entry after one launch; θ = 2 waits for a second launch to
+agree. Step 4 showed θ = 1 lets a single unrepresentative launch (e.g. one that did not use the
+FPU) cause large losses on the next launch; θ = 2 is the chosen value.
+
+**Stall cap (1%) — performance budget.** Waking a power-gated unit takes `WAKE_LAT` cycles, but an
+instruction is seen only ~6–7 cycles before it reaches the unit (step 2), so each wake stalls it
+for about `WAKE_LAT` − 6 cycles. Smaller timeouts save more leakage but cause more stalls. A policy
+may choose a timeout only if its wake stalls stay **≤ 1% of the launch's cycles** (≤ 1% slowdown):
+P1/P1-C apply it when choosing N\* after each launch, B3-global and B3-perkernel-oracle when
+choosing their N offline; B3-BET ignores it. Results are always reported as saving plus stall
+(e.g. `93% (1.11%)`), since a policy is only better if it saves more at a similar stall level.
+1% is a design choice; step 4 swept 0.5/1/2/5%.
+
+**Option C (concern 11) — P1-C, the robust history policy that step 7 builds.** P1's losses come
+from trusting mispredictions. P1-C keeps the same table and training but makes wrong entries cheap:
+1. **Fallback = B3-global's timeout** (a design-time constant) instead of BET, so a table miss or a
+   low-confidence entry behaves like the best single timeout;
+2. **N\* = 0 only means "start the launch in PG"**; if the unit is used after all, it wakes on first
+   use and the fallback timeout applies for the rest of the launch (one wake instead of one per
+   short gap);
+3. **θ = 2.**
+
+Step-4 result (pooled, % of the oracle's saving): P1-C 85% / 88% / 91% at ASAP7 TT / ASAP7 SS
+100 °C / leakage share 10%, vs B3-global 85% / 87% / 93% and the original P1 74% / 84% / 93%; P1-C
+has no large per-sequence losses (worst ~0%, where P1 reached −229%).
 
 ---
 
@@ -51,17 +103,21 @@ Vortex checkout at `vortex/` (commit `ca18837bd`). Concerns are ordered so that 
 |---|---|---|
 | 1 | When the CG→PG decision is made | **Learned timeout N\* per (kernel, unit).** Unit is CG'd when idle and drained, PG'd after N\* idle cycles (N\* = 0 → PG on drain; N\* = ∞ → CG only). BET is a design-time constant used only to pick N\*. PG always implies CG (clock off in PG and WAKING); PG savings are counted only as leakage on top of CG. |
 | 2 | Static baseline B4 | **No compiler work.** Replaced by **B4-UB**: offline upper bound that PGs every unit never dispatched to during a launch, computed from RTL traces. |
-| 3 | Misprediction and training | N\* = lowest-energy candidate whose predicted stalls stay under a performance cap X%. ±1-bucket match → confidence +1, else −1; replace N\* only at confidence 0 (hysteresis). Miss / low confidence → fallback N = BET. Report gap to O as three energy terms (premature PG, waiting cost, skipped windows) plus stalls. |
+| 3 | Misprediction and training | N\* = lowest-energy candidate whose predicted stalls stay under a performance cap X%. ±1-bucket match → confidence +1, else −1; replace N\* only at confidence 0 (hysteresis). Miss / low confidence → fallback N = BET (*superseded by 11: fallback = B3-global's N, θ = 2*). Report gap to O as three energy terms (premature PG, waiting cost, skipped windows) plus stalls. |
 | 4 | Region-level (Level 2) table | **Dropped entirely.** Key is the kernel entry PC only; P2 and step 8 removed. |
-| 5 | Pre-wake and between kernels | Per-core launch epoch: starts on first CTA with a new kernel entry (`entry_r`); ends when core drained ∧ KMU not running, or a CTA with a different entry arrives. All gateable units PG'd between kernels; inter-kernel time excluded from energy. At launch: N\* ≠ 0 → pre-wake; N\* = 0 → stay PG'd; miss → wake all, N = BET. |
+| 5 | Pre-wake and between kernels | Per-core launch epoch: starts on first CTA with a new kernel entry (`entry_r`); ends when core drained ∧ KMU not running, or a CTA with a different entry arrives. All gateable units PG'd between kernels; inter-kernel time excluded from energy. At launch: N\* ≠ 0 → pre-wake; N\* = 0 → stay PG'd; miss → wake all, N = BET (*refined by 11: N\* = 0 only at launch, then the fallback timeout; fallback = B3-global's N*). |
 | 6 | Long-lived state inside units | PG domains: TCU datapath + tile buffers, MUFU, FPU. CG only: TCU metadata RAM, SFU CSR / warp-control / `csr_fpu` / `dp_ram`, ALU, LSU. Drain is per instruction (never mid-uop-sequence). Scramble on PG entry, reset on wake (simulation model). MUFU demand = `EX_SFU` + SFU op type. |
 | 7 | Small doc fixes | Drop SLVT (LVT main, RVT sensitivity). Install ASAP7 at step 3. Reword §3.2 keying text. Fix testbench list (`issue`, `fma_unit`, `tcu_unit`, `mufu_unit`, `core`). |
 | 8 | Baseline for CG savings | Two synthesis stacks from the same RTL: without Yosys `clockgate` (B0 → B2′ → P1′, headline) and with it (B1 → B2 → P1, credibility). Report dynamic and leakage savings separately in both. |
+| 9 | Leakage tiny in ASAP7 | *Open.* Step 4 reports every option: ASAP7 TT, ASAP7 SS 100 °C, and leakage shares 5–30%. |
+| 10 | Repeated-launch workloads | *Proposed set used in step 4:* W1 repeated (`sgemm_tcu -r8`, `tfu`), W2 varying sizes, W3 transformer-style GEMM → softmax → GEMM sequences composed from per-launch traces. |
+| 11 | Build step 7? | **Option C (P1-C):** history table with fallback = B3-global's N, N\* = 0 only at launch, θ = 2; validated in the step-4 model (no large losses, matches or beats B3-global at the ASAP7 corners). |
 
 **Final configuration set** (each in both synthesis stacks where it applies):
 B0 / B1 (no unit gating), B2 (reactive unit CG), B3-global (timeout PG, one N), B3-perkernel-oracle
-(timeout PG, best N per kernel, offline), B4-UB (trace-based static upper bound, offline), P1
-(history-learned N\*), O (per-window oracle, offline).
+(timeout PG, best N per kernel, offline), B4-UB (trace-based static upper bound, offline), P1-C
+(history-learned N\*, option C; the original P1 is kept as a model-only comparison), O
+(per-window oracle, offline).
 
 ---
 
@@ -96,9 +152,11 @@ Replaces §5 of `VORTEX_GATING_PROJECT.md`. Concern numbers in brackets.
    WAKING; isolation; `WAKE_LAT` counter; scramble on PG entry, reset on wake [1, 6a, 6c].
    Per-core epoch detection and PG between kernels [5a, 5b]. Timeout PG (B3). Regression on/off,
    including TCU tests with WGMMA, sparse and MX enabled [6e].
-7. **History table (P1).** Per-core table keyed on the kernel entry PC (`entry_r` in `VX_cta_dispatch`, not `cta_PC`); per unit N\* index + 2-bit
-   confidence; per-unit idle-run histograms; kernel-end N\* selection under the performance cap;
-   ±1-bucket hysteresis; fallback N = BET; launch-time pre-wake for N\* ≠ 0 [1, 3, 5c]. Perf
+7. **History table (P1-C).** Per-core table keyed on the kernel entry PC (`entry_r` in `VX_cta_dispatch`, not `cta_PC`); per unit N\* index (4 bits:
+   {0, 8, …, 16384, ∞}) + 2-bit confidence; per-unit idle-run histograms; kernel-end N\* selection
+   under the 1% stall cap; ±1-bucket hysteresis; θ = 2; fallback = B3-global's N (design-time
+   constant); N\* = 0 only keeps a unit in PG at launch, fallback timeout once it is used;
+   launch-time pre-wake for N\* ≠ 0 [1, 3, 5c, 11]. Perf
    counters: cycles in ON / CG / PG / WAKING, PG entries, wake stalls, pre-wakes, fallback launches.
 8. **Synthesis and power, both stacks.** Every config synthesized without and with Yosys
    `clockgate` [8]; gate-level SAIF; OpenSTA power and timing; area of controller + ICGs + table.
@@ -338,6 +396,7 @@ window of length L under timeout N\*:
   confidence reaches 0 (hysteresis). Measure a last-value predictor as a sensitivity point.
   Below θ, use the fallback N but keep training.
 - **3c:** fallback N = BET_u (per unit). Report the fraction of launches that run on the fallback.
+  *(Superseded by concern 11 option C: fallback = B3-global's N; θ = 2.)*
 - **3d (adopted as proposed):** count only idle windows that end inside the launch; inter-kernel
   idle tracked separately (concern 5). Counter width / saturation policy chosen in step 4. With
   several kernels resident on one core: no training, and use the largest N\* (least gating).
@@ -636,3 +695,81 @@ hardware. But claims must stay tied to what is measured.
   Cost: one extra parameter in the step-4 model; no extra synthesis.
 
 **Decision:** _pending_
+
+---
+
+## 10. Workloads lack repeated kernel launches, which history needs
+
+### Problem
+P1 learns a kernel's timeout N\* from that kernel's **previous** launch, so it can only differ
+from B3 when a kernel is launched more than once. In the step-1/2 workload set:
+- 8 of the 10 tests launch one kernel once (nothing to learn from);
+- `multikernel` launches three *different* kernels once each;
+- only `tfu` relaunches a kernel (15 launches).
+
+The plan (§4.4) also asks for irregular, input-dependent launches, where "predict the previous
+launch" is known to fail (HPCA 2017 MPC paper). None of the current tests provide that.
+
+### Proposed workload set (recommended)
+Three classes, built from apps that take size arguments (`-m/-n/-k`, `-n`, `-N/-D`) or relaunch
+in hardware (`sgemm_tcu -r`, `tfu -r`):
+
+| Class | Purpose | Workloads |
+|---|---|---|
+| W1 Repeated, identical | History's best case | `sgemm_tcu -r 8` (one session, 8 back-to-back launches); `tfu` (15 launches) |
+| W2 Repeated, varying input | Input-dependent behaviour; tests "previous launch" prediction | `sgemm_tcu_wg` m=n=k ∈ {32, 64, 128}; `softmax` n ∈ {32, 64, 128}; `sgemm` n ∈ {16, 32, 64}; `flash_attn_tcu_wg` (XLEN 64) N ∈ {16, 32} |
+| W3 Interleaved kernels | Transformer-like phases; per-kernel keying | Sequences composed from W2 launches, e.g. [`sgemm_tcu_wg` → `softmax` → `sgemm_tcu_wg`] × layers with changing sizes |
+
+W2/W3 sequences are **composed offline** from per-launch traces: each run gives one launch's
+idle windows; a sequence is an ordered list of (kernel, input) launches, and the history table
+model walks it in order. Kernels are keyed by entry PC per app.
+
+### Limitations accepted
+- Composed sequences start each launch with the caches/state of a fresh run, not of the previous
+  kernel in the sequence (W1 `-r` runs do carry state across launches).
+- Sizes are kept small enough for rtlsim tracing (largest ~15 min per run).
+
+**Decision:** _pending_ (step 4 uses the recommended set; change it here if you prefer another).
+
+---
+
+## 11. History (P1) shows mixed benefit over a global timeout — build step 7?
+
+### Step 4 result
+Pooled over seven launch sequences (θ = 2, 1% stall cap), as % of the oracle's saving:
+P1 74 / 84 / 93% vs best global timeout (B3-global) 85 / 87 / 93% at ASAP7 TT / ASAP7 SS 100 °C /
+leakage share 10%. P1 beats B3-global by up to ~25–80 points where a kernel needs a very different
+timeout from the rest (attention TCU and FPU), and loses where consecutive launches of a kernel
+differ (`tfu` op changes, GEMM size changes). B4-UB (static) reaches only 10–62%.
+
+The plan's go/no-go criterion says to stop after step 6 if P1 captures little beyond B4-UB and
+B3-perkernel-oracle. P1 is far above B4-UB but not above the offline per-kernel oracle.
+
+### Options
+- **A. Stop after step 6.** Build CG (B2) and timeout PG (B3) in RTL; report P1 from the offline
+  model only, as an honest negative/mixed result. Least work; the RTL story is CG + timeout PG.
+- **B. Build step 7 as planned (P1 as designed).** The RTL result would likely mirror the model:
+  wins on attention, losses on irregular sequences.
+- **C. Build step 7 with a more robust predictor (recommended if continuing).** Keep the per-kernel
+  table but make mispredictions cheap: (i) store the B3-global N as the fallback instead of BET,
+  (ii) never apply N\* = 0 to used units (keep "stay in PG at launch" for units unused last launch,
+  but use the fallback timeout once the unit is used), (iii) require θ = 2. Validate in the offline
+  model first (cheap: ~7 s per run) before writing RTL.
+
+**Decision (2026-11-27): Option C.** Implemented in the offline model as policy **P1-C**
+(`cs752_tools/gating_model.py`) and validated before any RTL (θ = 2, 1% stall cap, k = 1,
+WAKE_LAT = 20; pooled % of the oracle's saving, pooled stall):
+
+| Leakage | B3-global | P1 (original) | **P1-C** |
+|---|---|---|---|
+| ASAP7 TT | 85% (0.00%) | 74% (0.03%) | **85%** (0.01%) |
+| ASAP7 SS 100 °C | 87% (0.61%) | 84% (0.48%) | **88%** (0.55%) |
+| share 10% | 93% (0.75%) | 93% (1.11%) | **91%** (0.68%) |
+
+- No large per-sequence losses: worst cases ~0%, where P1 reached −229% (`tfu` FPU, TT), −25%
+  (GEMM size changes) and −23% (`tfu` TFU, SS).
+- Keeps most of P1's wins: attention TCU at ASAP7 TT 79.5% of O (P1 86.8%, B3-global 62.0%).
+- More conservative than B3-global on a few sequences at the leakage-share points (`tfu`), where
+  B3-global saves more partly by exceeding the 1% cap on that sequence; at a 2% cap P1-C equals
+  B3-global within 1 point everywhere.
+- Step 7 builds P1-C; the original P1 stays in the model as a comparison point.

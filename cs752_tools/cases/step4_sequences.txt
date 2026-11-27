@@ -1,0 +1,11 @@
+# name: <test>[@launch|@*] ...   launches in the order the history table sees them
+# W1 repeated, identical (hardware relaunches in one session)
+w1_sgemm_tcu_r8: w1_sgemm_tcu_r8@*
+w1_tfu_r15: tfu@*
+# W2 same kernel, varying input size (composed from separate runs)
+w2_gemmwg_mixed: w2_gemmwg_32 sgemm_tcu_wg w2_gemmwg_128 sgemm_tcu_wg w2_gemmwg_32 w2_gemmwg_128
+w2_softmax_mixed: w2_softmax_32 w2_softmax_64 w2_softmax_128 w2_softmax_32 w2_softmax_64
+w2_sgemm_mixed: w2_sgemm_16 sgemm w2_sgemm_32 w2_sgemm_16 sgemm w2_sgemm_32
+w2_fawg_mixed: w2_fawg_16 flash_attn_tcu_wg64 w2_fawg_16 flash_attn_tcu_wg64
+# W3 transformer-like layers [GEMM -> softmax -> GEMM], layer size alternating 64/32
+w3_transformer: sgemm_tcu_wg w2_softmax_64 sgemm_tcu_wg w2_gemmwg_32 w2_softmax_32 w2_gemmwg_32 sgemm_tcu_wg w2_softmax_64 sgemm_tcu_wg w2_gemmwg_32 w2_softmax_32 w2_gemmwg_32
