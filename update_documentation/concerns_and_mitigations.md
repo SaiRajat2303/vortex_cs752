@@ -24,6 +24,13 @@ Vortex checkout at `vortex/` (commit `ca18837bd`). Concerns are ordered so that 
 > (`hw/rtl/core/VX_cta_dispatch.sv:696`) and exposed as `VX_CSR_CTA_ENTRY`. Earlier text claiming
 > `cta_PC` and `dcr_entry` are the same value was wrong; all references below now use `entry_r`.
 
+> **Step 2 measurements (2026-11-26)** — resolve open checks; details in
+> `vortex_cs752/update_documentation/step2.md`:
+> - 3d: no test ever has two launches active on one core (incl. `multikernel`, `tfu` × 15 launches).
+> - 5d: prologue median 43 cycles (115–148 with 8 warps or 4 issue slices); decode→dispatch lead
+>   time 7 cycles (TCU 6), so wake-ups beyond ~6 cycles need pre-wake to avoid stalls.
+> - 6b: PG and CG idle views differ by ≤ 1 window, so not splitting uop sequences costs almost nothing.
+
 | # | Concern | Affects | Status |
 |---|---|---|---|
 | 1 | When the CG→PG decision is made (+ CG/PG sequencing and energy accounting) | §3.1, §3.3, §3.4, §4.1, §4.3 | **Decided: option B** (parameters TBD in step 4) |

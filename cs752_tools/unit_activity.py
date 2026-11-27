@@ -28,6 +28,7 @@ LINE_RE = re.compile(r'^\s*(\d+): (\S+) ([\w-]+): (.*)$')
 UUID_RE = re.compile(r'\(#(\d+)\)\s*$')
 FIELD_RE = re.compile(r'(\w+)=([^,\s]+)')
 SLICE_RE = re.compile(r'issue(\d+)')
+DECODE_RE = re.compile(r'-decode\d*$')   # decode0..N when FETCH_WIDTH > 1
 
 # log2 histogram bins: [1], [2,3], [4,7], ... ; label = lower bound
 def bin_of(n):
@@ -130,7 +131,7 @@ def main():
             elif inst.endswith('-commit') and ev == 'commit':
                 if fields.get('eop') == '1':
                     commit_end[uuid] = cyc
-            elif inst.endswith('-decode') and ev == 'decode':
+            elif DECODE_RE.search(inst) and ev == 'decode':
                 decode_cyc.setdefault(uuid, cyc)
                 pc = int(fields.get('PC', '0'), 16)
                 decode_pc[uuid] = (int(fields.get('wid', 0)), pc)
