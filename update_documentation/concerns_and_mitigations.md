@@ -41,6 +41,7 @@ Vortex checkout at `vortex/` (commit `ca18837bd`). Concerns are ordered so that 
 | 6 | Long-lived state inside units (TCU, SFU) | §3.4, step 6 | **Decided: explicit PG domains, instruction-level drain, reset on wake** |
 | 7 | Small doc fixes | various | **Decided: drop SLVT, install ASAP7 at step 3, reword §3.2, fix testbench list** |
 | 8 | Baseline for clock-gating savings (tool-inserted CG vs own ICGs) | §4.1, §4.2, §4.3, step 9 | **Decided: two synthesis stacks (with and without Yosys `clockgate`)** |
+| 9 | Leakage is tiny in ASAP7, bounding PG savings | §4.2, §4.3, step 4 | **Open** (measured in step 3) |
 
 ---
 
@@ -596,3 +597,42 @@ project's own unit-level ICGs, comparing against an ungated baseline.
 - Cost: one extra synthesis setting per config, no extra RTL.
 - Doc changes: §4.1 config table gets the two-stack structure (primed configs = no tool CG);
   §4.3 states that both stacks are synthesized; step 9 synthesizes every config in both stacks.
+
+---
+
+## 9. Leakage is tiny in ASAP7, bounding PG savings
+
+### Measurement (step 3, `step3.md`)
+Synthesized evaluation core (4 warps × 4 threads, F, TCU+WGMMA, TFU), vectorless power:
+
+| Library / corner | Core leakage | Share of core power | Max PG saving (TCU+TFU+FPU leakage) |
+|---|---|---|---|
+| LVT TT (0.70 V, 25 °C) | 0.27 mW | 0.041% | 83 µW (0.013%) |
+| LVT SS (0.63 V, 100 °C) | 2.62 mW | 0.56% | 0.81 mW (0.17%) |
+| RVT TT | 0.029 mW | 0.005% | ~8 µW |
+
+BET with E_trans = one cycle of the domain's own dynamic energy (k = 1), LVT: TT 1,947 / 4,237 /
+7,956 cycles (TCU / TFU / FPU); SS 133 / 310 / 605.
+
+### Problem
+Power gating only saves leakage (concern 1 addendum). With ASAP7's leakage, even a perfect oracle
+saves ≤ 0.17% of core power at 100 °C and ≤ 0.013% at 25 °C, so history-guided PG cannot show a
+meaningful absolute energy benefit, whatever policy it uses. Real GPUs at operating temperature
+have much higher leakage shares (power models such as GPUWattch/AccelWattch attribute tens of
+percent of GPU power to static power), so ASAP7 at TT likely understates PG's value for real
+hardware. But claims must stay tied to what is measured.
+
+### Options
+- **A. ASAP7 as measured only.** Report PG savings at TT and SS/100 °C as they are. Honest, but the
+  PG result is near zero and the project's headline becomes CG only.
+- **B. Hot corner as the main PG operating point.** Use LVT SS/100 °C (BET 133–605) for all PG
+  results, TT as a sensitivity point. Better BETs, but absolute savings stay < 0.2%.
+- **C. Leakage-share sweep anchored on ASAP7 (recommended).** Keep ASAP7 SS/100 °C and TT as
+  measured anchor points, and add a parameter: domain leakage scaled so that static power is
+  5% / 10% / 20% / 30% of the domain's power, representing leakier technologies and temperatures.
+  Report every PG result (savings, BET, P1 vs B3/B4-UB/O) as a function of that share. This is
+  the standard way PG papers handle technology dependence, keeps the measured point visible, and
+  lets the policy comparison (the actual research question) be evaluated where PG matters.
+  Cost: one extra parameter in the step-4 model; no extra synthesis.
+
+**Decision:** _pending_
