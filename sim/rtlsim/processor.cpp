@@ -207,6 +207,9 @@ public:
     delete sfp_;
   #endif
 
+    // Run the RTL's `final` blocks (end-of-simulation reports) before teardown.
+    device_->final();
+
     // Model before context: the model holds a reference to the context it was
     // built with, so releasing the context first would leave that reference
     // dangling through the model's own destruction.

@@ -262,11 +262,25 @@ module VX_sfu_block import VX_gpu_pkg::*; #(
 `endif
 
 `ifdef VX_CFG_EXT_TFU_ENABLE
+    // Unit-level clock gating of the TFU: one result per accepted execute packet.
+    wire tfu_clk;
+    VX_unit_cg #(
+        .INSTANCE_ID (`SFORMATF(("%s-tfu-cg", INSTANCE_ID)))
+    ) tfu_cg (
+        .clk      (clk),
+        .reset    (reset),
+        .in_valid (pe_execute_if[PE_IDX_TFU].valid),
+        .in_start (pe_execute_if[PE_IDX_TFU].valid && pe_execute_if[PE_IDX_TFU].ready),
+        .out_end  (pe_result_if[PE_IDX_TFU].valid && pe_result_if[PE_IDX_TFU].ready),
+        .busy_in  (1'b0),
+        .clk_out  (tfu_clk)
+    );
+
     VX_tfu_unit #(
         .INSTANCE_ID (`SFORMATF(("%s-tfu", INSTANCE_ID))),
         .NUM_LANES   (NUM_LANES)
     ) tfu_unit (
-        .clk        (clk),
+        .clk        (tfu_clk),
         .reset      (reset),
         .execute_if (pe_execute_if[PE_IDX_TFU]),
         .result_if  (pe_result_if[PE_IDX_TFU])

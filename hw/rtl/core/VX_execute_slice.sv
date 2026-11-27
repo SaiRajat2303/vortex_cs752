@@ -93,6 +93,35 @@ import VX_tcu_pkg::*;
 `endif
     `SCOPE_IO_SWITCH (SCOPE_COUNT);
 
+    // Unit-level clock gating (VX_CFG_UNIT_CG_ENABLE): each execution block gets a
+    // clock held while the slice has nothing dispatched to it or in flight in it. The
+    // lane dispatch/gather adapters stay on clk; an instruction buffered there already
+    // counts as in flight. Without the option each block clock is clk.
+`define BLOCK_CG(name, ex, busy) \
+    wire name``_clk; \
+    VX_unit_cg #( \
+        .INSTANCE_ID (`SFORMATF(("%s-%s-cg", INSTANCE_ID, `"name`"))) \
+    ) name``_cg ( \
+        .clk      (clk), \
+        .reset    (reset), \
+        .in_valid (dispatch_if[ex].valid), \
+        .in_start (dispatch_if[ex].valid && dispatch_if[ex].ready && dispatch_if[ex].data.sop), \
+        .out_end  (commit_if[ex].valid && commit_if[ex].ready && commit_if[ex].data.eop), \
+        .busy_in  (busy), \
+        .clk_out  (name``_clk) \
+    )
+
+    `BLOCK_CG(alu, EX_ALU, 1'b0);
+    // The LSU keeps memory requests and stores pending after commit.
+    `BLOCK_CG(lsu, EX_LSU, lsu_busy);
+`ifdef VX_CFG_EXT_F_ENABLE
+    `BLOCK_CG(fpu, EX_FPU, 1'b0);
+`endif
+`ifdef VX_CFG_EXT_TCU_ENABLE
+    `BLOCK_CG(tcu, EX_TCU, 1'b0);
+`endif
+`undef BLOCK_CG
+
     // ALU
 
     VX_execute_if #(
@@ -122,7 +151,7 @@ import VX_tcu_pkg::*;
         .NUM_LANES   (`VX_CFG_NUM_ALU_LANES),
         .PARTIAL_BW  (ALU_PARTIAL_BW)
     ) alu_block (
-        .clk           (clk),
+        .clk           (alu_clk),
         .reset         (reset),
         .block_idx     (slice_id),
         .execute_if    (alu_execute_if[0]),
@@ -174,7 +203,7 @@ import VX_tcu_pkg::*;
         .INSTANCE_ID (`SFORMATF(("%s-lsu%s", INSTANCE_ID, SLICE_STR)))
     ) lsu_block (
         `SCOPE_IO_BIND  (0)
-        .clk              (clk),
+        .clk              (lsu_clk),
         .reset            (reset),
         .core_id          (core_id),
         .execute_if       (lsu_execute_if[0]),
@@ -313,7 +342,7 @@ import VX_tcu_pkg::*;
         .NUM_LANES   (`VX_CFG_NUM_FPU_LANES),
         .PARTIAL_BW  (FPU_PARTIAL_BW)
     ) fpu_block (
-        .clk        (clk),
+        .clk        (fpu_clk),
         .reset      (reset),
         .block_idx  (slice_id),
         .execute_if (fpu_execute_if[0]),
@@ -377,7 +406,7 @@ import VX_tcu_pkg::*;
         .BLOCK_STR   (SLICE_STR)
     ) tcu_block (
         `SCOPE_IO_BIND (1)
-        .clk              (clk),
+        .clk              (tcu_clk),
         .reset            (reset),
     `ifdef VX_CFG_TCU_WGMMA_ENABLE
         .exec_valid       (tcu_exec_valid),

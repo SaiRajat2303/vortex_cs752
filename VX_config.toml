@@ -571,6 +571,11 @@ YOSYS = false
 SYNOPSYS = false
 SV_DPI = false
 
+[gating]
+# Unit-level clock gating of the execution units (ALU, LSU, FPU, TCU, TFU): a unit's
+# clock stops while it has no instruction in flight and none being dispatched to it.
+VX_CFG_UNIT_CG_ENABLE = false
+
 [debug]
 VX_DBG_STALL_TIMEOUT = "expr: (100000 * (1 << ($VX_CFG_L2_ENABLED + $VX_CFG_L3_ENABLED)))"
 VX_DBG_DEBUG_LEVEL = 3

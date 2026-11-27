@@ -38,6 +38,15 @@ Vortex checkout at `vortex/` (commit `ca18837bd`). Concerns are ordered so that 
 > set in step 4: candidate N = {0, 8, …, 16384, ∞} (4 bits; concern 1's 3-bit set ends at 256, too
 > short for the step-3 BETs), θ = 2, stall cap 1%; launch boundary cost-neutral.
 
+> **Step 5 outcome (2026-11-27)** — details in `step5.md`: reactive unit CG (B2) implemented
+> (`VX_unit_cg`, `VX_CFG_UNIT_CG_ENABLE`, default off) for ALU, LSU, FPU, TCU, TFU in both back-end
+> structures (`VX_execute_slice` blocks and `VX_execute` units). Wake is 0 cycles; 18 regression
+> tests pass with identical cycle counts gating off/on. **Deviation from 6a:** SFU control (warp
+> control, CSR, `csr_fpu`, CTA context RAM) is not gated, because its CTA-broadcast/CSR inputs
+> arrive independently of dispatch. **Step 8 follow-up:** `VX_clockgate` synthesizes to a latch +
+> AND, not the library ICG cell; map it before power/timing runs (vectorless power is invalid
+> across the latch/AND).
+
 | # | Concern | Affects | Status |
 |---|---|---|---|
 | 1 | When the CG→PG decision is made (+ CG/PG sequencing and energy accounting) | §3.1, §3.3, §3.4, §4.1, §4.3 | **Decided: option B** (parameters TBD in step 4) |

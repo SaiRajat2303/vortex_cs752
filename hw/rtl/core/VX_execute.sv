@@ -90,10 +90,49 @@ import VX_tcu_pkg::*;
     VX_fpu_csr_if fpu_csr_if[`VX_CFG_NUM_FPU_BLOCKS]();
 `endif
 
+    // Unit-level clock gating (VX_CFG_UNIT_CG_ENABLE): one gated clock per unit, held
+    // while the unit has nothing dispatched or in flight. Without the option each
+    // unit clock is clk.
+`define UNIT_CG(name, ex, busy) \
+    wire name``_clk; \
+    wire [`VX_CFG_ISSUE_WIDTH-1:0] name``_cg_valid, name``_cg_start, name``_cg_end; \
+    for (genvar i = 0; i < `VX_CFG_ISSUE_WIDTH; ++i) begin : g_``name``_cg_ports \
+        assign name``_cg_valid[i] = dispatch_if[ex * `VX_CFG_ISSUE_WIDTH + i].valid; \
+        assign name``_cg_start[i] = dispatch_if[ex * `VX_CFG_ISSUE_WIDTH + i].valid \
+                                 && dispatch_if[ex * `VX_CFG_ISSUE_WIDTH + i].ready \
+                                 && dispatch_if[ex * `VX_CFG_ISSUE_WIDTH + i].data.sop; \
+        assign name``_cg_end[i]   = commit_if[ex * `VX_CFG_ISSUE_WIDTH + i].valid \
+                                 && commit_if[ex * `VX_CFG_ISSUE_WIDTH + i].ready \
+                                 && commit_if[ex * `VX_CFG_ISSUE_WIDTH + i].data.eop; \
+    end \
+    VX_unit_cg #( \
+        .INSTANCE_ID (`SFORMATF(("%s-%s-cg", INSTANCE_ID, `"name`"))), \
+        .NUM_PORTS   (`VX_CFG_ISSUE_WIDTH) \
+    ) name``_cg ( \
+        .clk      (clk), \
+        .reset    (reset), \
+        .in_valid (name``_cg_valid), \
+        .in_start (name``_cg_start), \
+        .out_end  (name``_cg_end), \
+        .busy_in  (busy), \
+        .clk_out  (name``_clk) \
+    )
+
+    `UNIT_CG(alu, EX_ALU, 1'b0);
+    // The LSU keeps memory requests and stores pending after commit.
+    `UNIT_CG(lsu, EX_LSU, (| lsu_busy));
+`ifdef VX_CFG_EXT_F_ENABLE
+    `UNIT_CG(fpu, EX_FPU, 1'b0);
+`endif
+`ifdef VX_CFG_EXT_TCU_ENABLE
+    `UNIT_CG(tcu, EX_TCU, 1'b0);
+`endif
+`undef UNIT_CG
+
     VX_alu_unit #(
         .INSTANCE_ID (`SFORMATF(("%s-alu", INSTANCE_ID)))
     ) alu_unit (
-        .clk            (clk),
+        .clk            (alu_clk),
         .reset          (reset),
         .dispatch_if    (dispatch_if[EX_ALU * `VX_CFG_ISSUE_WIDTH +: `VX_CFG_ISSUE_WIDTH]),
         .commit_if      (commit_if[EX_ALU * `VX_CFG_ISSUE_WIDTH +: `VX_CFG_ISSUE_WIDTH]),
@@ -114,7 +153,7 @@ import VX_tcu_pkg::*;
         .INSTANCE_ID (`SFORMATF(("%s-lsu", INSTANCE_ID)))
     ) lsu_unit (
         `SCOPE_IO_BIND  (0)
-        .clk             (clk),
+        .clk             (lsu_clk),
         .reset           (reset),
         .core_id         (core_id),
         .dispatch_if         (dispatch_if[EX_LSU * `VX_CFG_ISSUE_WIDTH +: `VX_CFG_ISSUE_WIDTH]),
@@ -141,7 +180,7 @@ import VX_tcu_pkg::*;
     VX_fpu_unit #(
         .INSTANCE_ID (`SFORMATF(("%s-fpu", INSTANCE_ID)))
     ) fpu_unit (
-        .clk            (clk),
+        .clk            (fpu_clk),
         .reset          (reset),
         .dispatch_if    (dispatch_if[EX_FPU * `VX_CFG_ISSUE_WIDTH +: `VX_CFG_ISSUE_WIDTH]),
         .commit_if      (commit_if[EX_FPU * `VX_CFG_ISSUE_WIDTH +: `VX_CFG_ISSUE_WIDTH]),
@@ -154,7 +193,7 @@ import VX_tcu_pkg::*;
         .INSTANCE_ID (`SFORMATF(("%s-tcu", INSTANCE_ID)))
     ) tcu_unit (
         `SCOPE_IO_BIND  (1)
-        .clk              (clk),
+        .clk              (tcu_clk),
         .reset            (reset),
     `ifdef VX_CFG_TCU_WGMMA_ENABLE
         .exec_valid       (tcu_exec_valid),
