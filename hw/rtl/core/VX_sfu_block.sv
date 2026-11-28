@@ -146,11 +146,41 @@ module VX_sfu_block import VX_gpu_pkg::*; #(
         .result_in_if   (pe_result_if)
     );
 
+    // VX_wctl_unit #(
+    //     .INSTANCE_ID (`SFORMATF(("%s-wctl", INSTANCE_ID))),
+    //     .NUM_LANES   (NUM_LANES)
+    // ) wctl_unit (
+    //     .clk            (clk),
+    //     .reset          (reset),
+    //     .execute_if     (pe_execute_if[PE_IDX_WCTL]),
+    //     .warp_shared_if (warp_shared_if),
+    //     .warp_ctl_if    (warp_ctl_if),
+    //     .result_if      (pe_result_if[PE_IDX_WCTL])
+    // );
+    
+    // Unit-level clock gating of the warp control unit
+    wire wctl_clk;
+    wire wctl_busy = warp_ctl_if.tmc_valid   || warp_ctl_if.split_valid
+                  || warp_ctl_if.sjoin_valid || warp_ctl_if.wsync_valid
+                  || warp_shared_if.req_valid || warp_shared_if.rsp_valid;
+
+    VX_unit_cg #(
+        .INSTANCE_ID (`SFORMATF(("%s-wctl-cg", INSTANCE_ID)))
+    ) wctl_cg (
+        .clk      (clk),
+        .reset    (reset),
+        .in_valid (pe_execute_if[PE_IDX_WCTL].valid),
+        .in_start (pe_execute_if[PE_IDX_WCTL].valid && pe_execute_if[PE_IDX_WCTL].ready),
+        .out_end  (pe_result_if[PE_IDX_WCTL].valid && pe_result_if[PE_IDX_WCTL].ready),
+        .busy_in  (wctl_busy),
+        .clk_out  (wctl_clk)
+    );
+
     VX_wctl_unit #(
         .INSTANCE_ID (`SFORMATF(("%s-wctl", INSTANCE_ID))),
         .NUM_LANES   (NUM_LANES)
     ) wctl_unit (
-        .clk            (clk),
+        .clk            (wctl_clk),
         .reset          (reset),
         .execute_if     (pe_execute_if[PE_IDX_WCTL]),
         .warp_shared_if (warp_shared_if),
