@@ -321,6 +321,7 @@ import VX_tcu_pkg::*;
 
 `ifdef VX_CFG_EXT_F_ENABLE
     VX_fpu_csr_if fpu_csr_if[1]();
+    assign fpu_csr_busy = fpu_csr_if[0].write_enable;
 
     VX_execute_if #(
         .data_t (fpu_execute_t)
