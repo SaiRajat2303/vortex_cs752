@@ -1,0 +1,11 @@
+# Work session for vortex_cs752. Run from your home folder on learn:
+#   cd ~ && condor_submit -i vortex_cs752/cs752_tools/chtc/cg.sub
+executable = /usr/bin/hostname
+requirements = (HasCHTCStaging == true)
+transfer_input_files = vortex_cs752
+transfer_output_files = results.tar.gz
+request_cpus = 4
+request_memory = 16GB
+request_disk = 40GB
+queue
+EOF
