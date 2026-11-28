@@ -121,9 +121,18 @@ import VX_tcu_pkg::*;
     `UNIT_CG(alu, EX_ALU, 1'b0);
     // The LSU keeps memory requests and stores pending after commit.
     `UNIT_CG(lsu, EX_LSU, (| lsu_busy));
+// `ifdef VX_CFG_EXT_F_ENABLE
+//     `UNIT_CG(fpu, EX_FPU, 1'b0);
+// `endif
 `ifdef VX_CFG_EXT_F_ENABLE
-    `UNIT_CG(fpu, EX_FPU, 1'b0);
+    // fpu_csr_reg drives fpu_csr_if from inside the gated unit
+    wire [`VX_CFG_NUM_FPU_BLOCKS-1:0] fpu_csr_we;
+    for (genvar i = 0; i < `VX_CFG_NUM_FPU_BLOCKS; ++i) begin : g_fpu_csr_we
+        assign fpu_csr_we[i] = fpu_csr_if[i].write_enable;
+    end
+    `UNIT_CG(fpu, EX_FPU, (| fpu_csr_we));
 `endif
+
 `ifdef VX_CFG_EXT_TCU_ENABLE
     `UNIT_CG(tcu, EX_TCU, 1'b0);
 `endif
